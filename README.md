@@ -1,6 +1,11 @@
 # Python Sensitive File And Directory Scanner
 
-Async Website Audit Scanner
+⚠️ Important Legal & Safety Notice
+This tool is designed for educational and authorized security testing purposes only. Use it only against websites, servers, or environments that you own or have explicit written permission to test. Unauthorized use against third-party systems may violate laws or terms of service.
+
+The author assumes no responsibility or liability for misuse, damage, or any consequences arising from improper or illegal use of this software. Always operate in accordance with ethical hacking principles and applicable regulations.
+
+# Async Website Audit Scanner
 
 An asynchronous website audit scanner that probes a target site for commonly exposed files and directories and produces a timestamped PDF report. It is designed for fast, configurable reconnaissance and lightweight triage of potentially sensitive content.
 
