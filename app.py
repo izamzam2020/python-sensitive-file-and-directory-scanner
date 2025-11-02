@@ -11,6 +11,7 @@ import argparse
 import random
 from dotenv import load_dotenv  # <-- added for .env support
 import sys
+import difflib
 
 # Load environment variables from .env file
 load_dotenv()
@@ -169,10 +170,61 @@ async def fetch(session, url):
     except Exception:
         return None, ""
 
+# Soft-404 detection helpers
+SOFT_404_MARKERS = [
+    "404", "not found", "page not found", "doesn't exist", "does not exist",
+    "can't find", "cannot find", "oops", "we're sorry", "return to home"
+]
+
+soft_404_baseline_text = None
+
+def _normalize_html_text(content: str) -> str:
+    try:
+        soup = BeautifulSoup(content, "html.parser")
+        text = soup.get_text(" ")
+    except Exception:
+        text = content
+    # normalize whitespace and lowercase
+    return " ".join(text.split()).lower()
+
+def looks_like_soft_404(status: int, content: str) -> bool:
+    if status != 200 or not content:
+        return False
+    text = _normalize_html_text(content)
+    # keyword markers
+    if any(marker in text for marker in SOFT_404_MARKERS):
+        return True
+    # similarity to baseline soft-404
+    if soft_404_baseline_text:
+        try:
+            ratio = difflib.SequenceMatcher(None, text[:4000], soft_404_baseline_text[:4000]).ratio()
+            if ratio >= 0.92:
+                return True
+        except Exception:
+            pass
+    return False
+
+def ensure_trailing_slash(url: str) -> str:
+    return url if url.endswith('/') else url + '/'
+
+async def init_soft_404_baseline(session, base_url: str, speed: str):
+    global soft_404_baseline_text, request_semaphore
+    base = ensure_trailing_slash(base_url)
+    random_slug = f"__scanner_missing__{random.randint(100000, 999999)}/"  # no leading slash
+    test_url = urljoin(base, random_slug)
+    async with request_semaphore:
+        await throttle(speed)
+        status, content = await fetch(session, test_url)
+    if status == 200 and content:
+        soft_404_baseline_text = _normalize_html_text(content)
+
 # Analyze a file or directory path
 async def analyze_path(session, base_url: str, path: str, findings: list, counters: dict, speed: str):
     global vuln_count, scanned_urls_log, request_semaphore
-    full_url = urljoin(base_url, path)
+    base = ensure_trailing_slash(base_url)
+    # Always treat paths as relative to base; remove any leading slash
+    rel_path = path.lstrip('/')
+    full_url = urljoin(base, rel_path)
     
     # Print scanning status
     print(f"{Colors.CYAN}[SCANNING]{Colors.END} {path}")
@@ -198,12 +250,16 @@ async def analyze_path(session, base_url: str, path: str, findings: list, counte
     }
 
     if status == 200:
+        # Soft-404 guard: treat as clean if body matches site's not-found template
+        if looks_like_soft_404(status, content):
+            scan_result["vulnerability"] = "clean"
+            print(f"{Colors.GREEN}✅{Colors.END} {Colors.WHITE}[CLEAN]{Colors.END} {path} (soft 404)")
         # Check if this is a sensitive directory that shouldn't be publicly accessible
-        if is_dir and is_sensitive_directory(path):
+        elif is_sensitive_directory(path):
             vuln_count += 1
             scan_result["vulnerability"] = "high"
             print(f"{Colors.GREEN}✅{Colors.END} {Colors.RED}[HIGH]{Colors.END} {Colors.BOLD}{path}{Colors.END} - {Colors.YELLOW}Vulns: {vuln_count}{Colors.END}")
-            findings.append({"level": "high", "url": full_url, "notes": "Sensitive directory publicly accessible", "type": "directory"})
+            findings.append({"level": "high", "url": full_url, "notes": "Sensitive directory publicly accessible", "type": "directory" if is_dir else "file"})
         elif content.strip():
             # Check content sensitivity for files or directories with content
             score = score_content_sensitivity(content)
@@ -227,8 +283,15 @@ async def analyze_path(session, base_url: str, path: str, findings: list, counte
             scan_result["vulnerability"] = "clean"
             print(f"{Colors.GREEN}✅{Colors.END} {Colors.WHITE}[CLEAN]{Colors.END} {path}")
     else:
-        scan_result["vulnerability"] = "clean"
-        print(f"{Colors.GREEN}✅{Colors.END} {Colors.WHITE}[CLEAN]{Colors.END} {path}")
+        # Treat 401/403 on sensitive paths as medium (exists but restricted)
+        if status in (401, 403) and is_sensitive_directory(path):
+            vuln_count += 1
+            scan_result["vulnerability"] = "medium"
+            print(f"{Colors.GREEN}✅{Colors.END} {Colors.YELLOW}[MEDIUM]{Colors.END} {Colors.BOLD}{path}{Colors.END} - {Colors.YELLOW}Vulns: {vuln_count}{Colors.END}")
+            findings.append({"level": "medium", "url": full_url, "notes": f"Restricted access ({status}) on sensitive path", "type": "directory" if is_dir else "file"})
+        else:
+            scan_result["vulnerability"] = "clean"
+            print(f"{Colors.GREEN}✅{Colors.END} {Colors.WHITE}[CLEAN]{Colors.END} {path}")
     
     scanned_urls_log.append(scan_result)
 
@@ -250,9 +313,10 @@ async def analyze_js(session, base_url: str, findings: list, counters: dict, spe
     global vuln_count, scanned_urls_log, request_semaphore
     print(f"{Colors.CYAN}[SCANNING]{Colors.END} Main page for JS files")
     
+    base = ensure_trailing_slash(base_url)
     async with request_semaphore:
         await throttle(speed)
-        status, content = await fetch(session, base_url)
+        status, content = await fetch(session, base)
     counters["files"] += 1  # counting homepage as scanned file
 
     if status != 200:
@@ -453,10 +517,13 @@ async def run_full_scan(base_url: str, speed: str):
 
     connector = aiohttp.TCPConnector(limit=concurrency_limit, limit_per_host=concurrency_limit)
 
+    normalized_base = ensure_trailing_slash(base_url)
     async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = [analyze_path(session, base_url, path, findings, counters, speed) for path in paths_to_scan]
+        # Initialize soft-404 baseline for this target
+        await init_soft_404_baseline(session, normalized_base, speed)
+        tasks = [analyze_path(session, normalized_base, path, findings, counters, speed) for path in paths_to_scan]
         await asyncio.gather(*tasks)
-        await analyze_js(session, base_url, findings, counters, speed)
+        await analyze_js(session, normalized_base, findings, counters, speed)
 
     print("-" * 60)
     print(f"{Colors.BOLD}{Colors.GREEN}✅ Scan completed!{Colors.END}")
