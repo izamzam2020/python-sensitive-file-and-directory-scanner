@@ -70,6 +70,8 @@ An OpenAI API key, if you want, optional AI triage
 
 Clone the repository.
 
+If you want to include your logo in the report, create a directory called **images** in the root of the project and add your logo named **logo.png inside the /images directory**.
+
 Create and activate a virtual environment:
 
 python -m venv venv
