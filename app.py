@@ -101,16 +101,25 @@ SUSPICIOUS_FILE_EXTENSIONS = {
     "sql", "sqlite", "db", "bak", "backup",
     "env", "pem", "key", "pfx", "cer",
 }
-SUSPICIOUS_FILE_KEYWORDS = {"backup", "dump", "database", "secrets", "private", "keys"}
 
 def is_suspicious_file(path: str) -> bool:
     name = path.strip("/").split("/")[-1].lower()
-    if "." in name:
-        ext = name.rsplit(".", 1)[-1]
-        if ext in SUSPICIOUS_FILE_EXTENSIONS:
-            return True
-    base = name.rsplit(".", 1)[0]
-    return any(k in base for k in SUSPICIOUS_FILE_KEYWORDS)
+    if "." not in name:
+        # No file extension → treat as directory or unknown; do not flag as file
+        return False
+    ext = name.rsplit(".", 1)[-1]
+    return ext in SUSPICIOUS_FILE_EXTENSIONS
+
+def path_looks_like_directory(path: str) -> bool:
+    """Heuristic: consider it a directory if it ends with '/', or the last segment has no dot and matches sensitive dir names."""
+    if path.endswith("/"):
+        return True
+    last = path.strip("/").split("/")[-1].lower()
+    if not last:
+        return False
+    if "." not in last and last in SENSITIVE_DIRECTORIES:
+        return True
+    return False
 # Function to get user input for company name and URL
 def get_scan_details():
     print(f"{Colors.BOLD}{Colors.BLUE}🔍 Website Security Scanner{Colors.END}")
@@ -197,10 +206,16 @@ async def throttle(speed: str):
     if delay > 0:
         await asyncio.sleep(delay)
 
-# Async fetch with timeout (robust for binary content)
+# Async fetch with timeout (robust for binary content) with UA and localhost http fallback
 async def fetch(session, url):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        )
+    }
     try:
-        async with session.get(url, timeout=10) as resp:
+        async with session.get(url, timeout=20, headers=headers) as resp:
             raw = await resp.read()  # works for text or binary
             try:
                 text = raw.decode("utf-8", errors="ignore")
@@ -208,6 +223,19 @@ async def fetch(session, url):
                 text = ""
             return resp.status, text
     except Exception:
+        # If HTTPS to localhost/127.0.0.1 fails, retry with HTTP
+        try:
+            if url.startswith("https://localhost") or url.startswith("https://127.0.0.1"):
+                http_url = "http://" + url.split("://", 1)[1]
+                async with session.get(http_url, timeout=20, headers=headers) as resp2:
+                    raw2 = await resp2.read()
+                    try:
+                        text2 = raw2.decode("utf-8", errors="ignore")
+                    except Exception:
+                        text2 = ""
+                    return resp2.status, text2
+        except Exception:
+            pass
         return None, ""
 
 # Soft-404 detection helpers
@@ -273,7 +301,7 @@ async def analyze_path(session, base_url: str, path: str, findings: list, counte
         await throttle(speed)
         status, content = await fetch(session, full_url)
 
-    is_dir = path.endswith("/")
+    is_dir = path_looks_like_directory(path)
     if is_dir:
         counters["directories"] += 1
     else:
@@ -368,7 +396,7 @@ async def analyze_js(session, base_url: str, findings: list, counters: dict, spe
     counters["files"] += 1  # counting homepage as scanned file
 
     if status != 200:
-        print(f"{Colors.RED}[ERROR]{Colors.END} Could not access main page")
+        print(f"{Colors.RED}[ERROR]{Colors.END} Could not access main page (status={status})")
         return
 
     soup = BeautifulSoup(content, "html.parser")
