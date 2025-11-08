@@ -16,6 +16,7 @@ Configurable list of paths to probe via paths_to_scan.py
 - Records HTTP status and content indicators for every probe and compiles a color-coded, traceable log
 - Generates a timestamped PDF report containing a summary, detailed findings, and full scan log
 - Risk grading using simple heuristics with optional AI-assisted triage for medium confidence results
+- Soft 404 detection
 
 Adjustable pacing with --speed to control per-request delay and concurrency
 
@@ -30,6 +31,8 @@ When a heuristic returns medium risk, the tool can call an OpenAI model to provi
 
 All findings are saved to a timestamped PDF report that includes a summary, detailed results, and a full color-coded log for traceability.
 
+The scanner generates a URL that will intentionally return a 404. This response is stored during the scan so that soft 404s (pages that return a 200 status but are effectively 404s) can be detected.
+
 # Risk grading
 
 Heuristics scan content for keywords that commonly indicate exposed secrets or credentials and assign low, medium, or high risk.
@@ -38,19 +41,19 @@ Optional AI triage: when heuristics result is medium risk, the app can send a li
 
 Pacing and concurrency (--speed)
 
-slow
+**slow (default)**
 
 Strictly sequential requests
 
 Randomized delay of about 2.0 to 4.0 seconds added immediately before each request
 
-medium
+**medium**
 
 Up to 5 concurrent requests
 
 Jittered delay per request of roughly 0.3 to 0.75 seconds
 
-fast
+**fast**
 
 Up to 20 concurrent requests
 
