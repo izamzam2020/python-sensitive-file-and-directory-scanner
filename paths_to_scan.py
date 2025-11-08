@@ -52,4 +52,34 @@ paths_to_scan = [
     # Rare but valid
     "old/", "old_site/", "bak/", "config~", "site.old", "archive/", "temp_site/", "v1/",
     "v2/", "final/", "final_backup/", "prod/", "production/", "live/", "new/"
+
+    # Dotfiles and variants
+    ".gitignore", ".editorconfig", ".env.example", ".env.local", ".env.production", ".env.development", ".env.backup", ".env.bak", ".env.old",
+
+    # PHP/Laravel
+    "server.php", "storage/logs/", "storage/app/", "storage/framework/", "bootstrap/cache/",
+
+    # Symfony
+    "var/log/", ".env.local.php",
+
+    # Node / modern JS frameworks
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "node_modules/", ".next/", ".nuxt/", ".vercel/", "dist/", "build/",
+
+    # PHP admin tools
+    "phpmyadmin/", "adminer.php", "phppgadmin/",
+
+    # Composer and artifacts
+    "composer.json", "composer.lock", "vendor/", "sitemap.xml", "robots.txt",
+
+    # API docs / debug endpoints
+    "swagger", "swagger/", "api-docs", "api-docs/", "openapi.json", "openapi.yaml", "graphql", "graphql/", "_debugbar", "_debugbar/",
+
+    # Well-known
+    ".well-known/security.txt", ".well-known/openid-configuration", ".well-known/assetlinks.json", "apple-app-site-association",
+
+    # Backup/file patterns (common names without wildcards)
+    "db.bak", "site.bak", "config.bak", "index.php.bak", "database.tar.gz", "dump.tar.gz", "dump.zip", "backup_old.zip", "backup-old.zip",
+
+    # Web server info endpoints
+    "server-status", "server-info",
 ]

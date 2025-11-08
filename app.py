@@ -46,7 +46,8 @@ scanned_urls_log = []
 scan_details = {
     "company_name": "",
     "target_url": "",
-    "scan_date": ""
+    "scan_date": "",
+    "include_full_log": True
 }
 
 # Global semaphore to control request concurrency
@@ -67,7 +68,15 @@ SENSITIVE_DIRECTORIES = [
     "test", "tests", "testing", "dev", "development", "staging", "sandbox", "demo",
     "example", "examples", "docs", "documentation", "doc",
     "wp-admin", "wp-content", "joomla", "drupal", "magento", "prestashop",
-    "img", "images", "img/", "images/","bk", "bk/", "backup", "backup/", "backups", "backups/"
+    "img", "images", "img/", "images/","bk", "bk/", "backup", "backup/", "backups", "backups/",
+    # Modern frameworks and package dirs
+    "storage", "storage/logs", "storage/app", "storage/framework", "bootstrap/cache",
+    "var", "var/log",
+    "vendor", "node_modules",
+    # Admin tools
+    "phpmyadmin", "phppgadmin", "_debugbar",
+    # Well-known endpoints folder
+    ".well-known"
 ]
 
 def is_sensitive_directory(path: str) -> bool:
@@ -86,6 +95,22 @@ def is_sensitive_directory(path: str) -> bool:
     
     return False
 
+# Suspicious file names/extensions that should not be publicly downloadable
+SUSPICIOUS_FILE_EXTENSIONS = {
+    "zip", "7z", "rar", "tar", "gz", "bz2",
+    "sql", "sqlite", "db", "bak", "backup",
+    "env", "pem", "key", "pfx", "cer",
+}
+SUSPICIOUS_FILE_KEYWORDS = {"backup", "dump", "database", "secrets", "private", "keys"}
+
+def is_suspicious_file(path: str) -> bool:
+    name = path.strip("/").split("/")[-1].lower()
+    if "." in name:
+        ext = name.rsplit(".", 1)[-1]
+        if ext in SUSPICIOUS_FILE_EXTENSIONS:
+            return True
+    base = name.rsplit(".", 1)[0]
+    return any(k in base for k in SUSPICIOUS_FILE_KEYWORDS)
 # Function to get user input for company name and URL
 def get_scan_details():
     print(f"{Colors.BOLD}{Colors.BLUE}🔍 Website Security Scanner{Colors.END}")
@@ -119,6 +144,17 @@ def get_scan_details():
     print(f"   Company: {Colors.BOLD}{company_name}{Colors.END}")
     print(f"   URL: {Colors.BOLD}{target_url}{Colors.END}")
     print(f"   Date: {Colors.BOLD}{scan_details['scan_date']}{Colors.END}")
+
+    # Ask whether to include full scan log
+    while True:
+        resp = input(f"{Colors.YELLOW}Include full scan log in the PDF report? (Y/N): {Colors.END}").strip().lower()
+        if resp in ("y", "yes", ""):
+            scan_details["include_full_log"] = True
+            break
+        if resp in ("n", "no"):
+            scan_details["include_full_log"] = False
+            break
+        print(f"{Colors.RED}Please enter Y or N.{Colors.END}")
     print()
 
 # Content sensitivity scoring (simple keyword check)
@@ -161,11 +197,15 @@ async def throttle(speed: str):
     if delay > 0:
         await asyncio.sleep(delay)
 
-# Async fetch with timeout
+# Async fetch with timeout (robust for binary content)
 async def fetch(session, url):
     try:
         async with session.get(url, timeout=10) as resp:
-            text = await resp.text()
+            raw = await resp.read()  # works for text or binary
+            try:
+                text = raw.decode("utf-8", errors="ignore")
+            except Exception:
+                text = ""
             return resp.status, text
     except Exception:
         return None, ""
@@ -244,12 +284,20 @@ async def analyze_path(session, base_url: str, path: str, findings: list, counte
         "url": full_url,
         "path": path,
         "status": status,
-        "has_content": bool(status == 200 and content.strip()),
+        # Consider 200 as has_content even if response is binary (content may be empty string after decode)
+        "has_content": bool(status == 200),
         "vulnerability": None,
         "type": "directory" if is_dir else "file"
     }
 
     if status == 200:
+        # If a suspicious downloadable file is publicly accessible, flag immediately
+        if not is_dir and is_suspicious_file(path):
+            vuln_count += 1
+            scan_result["vulnerability"] = "high"
+            print(f"{Colors.GREEN}✅{Colors.END} {Colors.RED}[HIGH]{Colors.END} {Colors.BOLD}{path}{Colors.END} - Publicly downloadable sensitive file")
+            findings.append({"level": "high", "url": full_url, "notes": "Publicly downloadable sensitive file", "type": "file"})
+        # Soft-404 guard
         # Soft-404 guard: treat as clean if body matches site's not-found template
         if looks_like_soft_404(status, content):
             scan_result["vulnerability"] = "clean"
@@ -388,104 +436,226 @@ async def analyze_js(session, base_url: str, findings: list, counters: dict, spe
         
         scanned_urls_log.append(scan_result)
 
-# PDF report generator
+# PDF report generator (styled with logo, modern fonts, and improved tables)
 class PDFReport(FPDF):
     def header(self):
-        self.set_font("Arial", "B", 16)
-        self.cell(0, 10, "Website Security Scan Report", 0, 1, "C")
-        self.set_font("Arial", "B", 12)
-        self.cell(0, 8, f"Company: {scan_details['company_name']}", 0, 1, "C")
-        self.set_font("Arial", "", 10)
-        self.cell(0, 8, f"Target URL: {scan_details['target_url']}", 0, 1, "C")
-        self.cell(0, 8, f"Scan Date: {scan_details['scan_date']}", 0, 1, "C")
+        try:
+            logo_path = os.path.join(os.path.dirname(__file__), "images", "logo.png")
+            if os.path.isfile(logo_path):
+                # Place logo at top-left (width ~28mm), keep aspect ratio
+                self.image(logo_path, x=15, y=10, w=28)
+        except Exception:
+            # If logo fails, continue without it
+            pass
+
+        self.set_xy(15, 12)
+        self.set_font("Helvetica", "B", 16)
+        self.set_text_color(20, 40, 80)
+        self.cell(0, 10, "Website Security Scan Report", 0, 1, "R")
+
+        self.set_font("Helvetica", "B", 12)
+        self.set_text_color(0, 0, 0)
+        self.cell(0, 8, f"Company: {scan_details['company_name']}", 0, 1, "R")
+        self.set_font("Helvetica", "", 10)
+        self.cell(0, 6, f"Target URL: {scan_details['target_url']}", 0, 1, "R")
+        self.cell(0, 6, f"Scan Date: {scan_details['scan_date']}", 0, 1, "R")
+
+        # Separator line
+        self.ln(2)
+        self.set_draw_color(220, 223, 230)
+        self.set_line_width(0.4)
+        self.line(15, self.get_y(), 195, self.get_y())
         self.ln(5)
 
     def footer(self):
         self.set_y(-15)
-        self.set_font("Arial", "I", 8)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(120, 120, 120)
         self.cell(0, 10, f"Page {self.page_no()}", 0, 0, "C")
 
 def save_report_to_pdf(findings: list, counters: dict) -> str:
     pdf = PDFReport()
+    # Margins and auto page break
+    pdf.set_margins(15, 18, 15)
+    pdf.set_auto_page_break(auto=True, margin=18)
     pdf.add_page()
 
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, f"Scan Summary:", 0, 1)
-    pdf.set_font("Arial", "", 11)
-    pdf.cell(0, 8, f"Files scanned: {counters.get('files',0)}", 0, 1)
-    pdf.cell(0, 8, f"Directories scanned: {counters.get('directories',0)}", 0, 1)
-    pdf.cell(0, 8, f"Potential issues found: {len(findings)}", 0, 1)
-    pdf.ln(10)
+    # Summary card
+    pdf.set_fill_color(245, 247, 250)  # light gray-blue
+    pdf.set_draw_color(222, 226, 233)
+    pdf.set_text_color(20, 20, 20)
+    pdf.set_line_width(0.3)
 
-    if not findings:
-        pdf.set_font("Arial", "I", 11)
-        pdf.cell(0, 10, "No security issues detected.", 0, 1)
-    else:
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 10, "Details:", 0, 1)
-        pdf.set_font("Arial", "", 10)
-        for i, finding in enumerate(findings, 1):
-            pdf.multi_cell(0, 7, f"{i}. [{finding['level'].upper()}] {finding['type'].capitalize()} at {finding['url']}\nNotes: {finding['notes']}\n")
-            pdf.ln(2)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 10, "Scan Summary", 0, 1)
+    pdf.set_font("Helvetica", "", 11)
 
-    # Add complete scan log at the bottom
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Complete Scan Log", 0, 1, "C")
+    pdf.set_x(15)
+    pdf.multi_cell(0, 8, f"Files scanned: {counters.get('files',0)}", 0, 1, fill=False)
+    pdf.set_x(15)
+    pdf.multi_cell(0, 8, f"Directories scanned: {counters.get('directories',0)}", 0, 1, fill=False)
+    pdf.set_x(15)
+    pdf.multi_cell(0, 8, f"Potential issues found: {len(findings)}", 0, 1, fill=False)
     pdf.ln(5)
-    
-    pdf.set_font("Arial", "B", 10)
-    pdf.cell(60, 8, "Path", 1)
-    pdf.cell(20, 8, "Status", 1)
-    pdf.cell(15, 8, "Result", 1)
-    pdf.cell(15, 8, "Type", 1)
-    pdf.ln()
-    
-    pdf.set_font("Arial", "", 8)
-    for scan in scanned_urls_log:
-        # Truncate long paths for display
-        display_path = scan["path"][:55] + "..." if len(scan["path"]) > 58 else scan["path"]
-        
-        # Set color based on vulnerability status
-        if scan["vulnerability"] == "high":
-            pdf.set_text_color(255, 0, 0)  # Red
-            result_symbol = "HIGH"
-        elif scan["vulnerability"] == "medium":
-            pdf.set_text_color(255, 165, 0)  # Orange
-            result_symbol = "MED"
-        elif scan["vulnerability"] == "skipped":
-            pdf.set_text_color(128, 128, 128)  # Gray
-            result_symbol = "SKIP"
-        else:
-            pdf.set_text_color(0, 128, 0)  # Green
-            result_symbol = "CLEAN"
-        
-        pdf.cell(60, 6, display_path, 1)
-        pdf.cell(20, 6, str(scan["status"]), 1)
-        pdf.cell(15, 6, result_symbol, 1)
-        pdf.cell(15, 6, scan["type"], 1)
-        pdf.ln()
-        
-        # Reset text color
-        pdf.set_text_color(0, 0, 0)
-    
-    # Add summary statistics
-    pdf.ln(10)
-    pdf.set_font("Arial", "B", 10)
-    pdf.cell(0, 8, "Scan Statistics:", 0, 1)
-    pdf.set_font("Arial", "", 9)
-    
+
+    # Findings details as styled table
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 10, "Details", 0, 1)
+    if not findings:
+        pdf.set_font("Helvetica", "I", 11)
+        pdf.cell(0, 8, "No security issues detected.", 1, 1, "C")
+    else:
+        header_fill = (240, 244, 248)
+        row_alt_fill = (249, 251, 253)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(*header_fill)
+        pdf.set_draw_color(220, 223, 230)
+        pdf.set_text_color(20, 40, 80)
+        # Columns: Level (22) | Type (22) | URL (80) | Notes (56) = 180
+        pdf.cell(22, 8, "Level", 1, 0, "C", True)
+        pdf.cell(22, 8, "Type", 1, 0, "C", True)
+        pdf.cell(80, 8, "URL", 1, 0, "L", True)
+        pdf.cell(56, 8, "Notes", 1, 1, "L", True)
+
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(15, 15, 15)
+        fill_toggle = False
+        for f in findings:
+            if fill_toggle:
+                pdf.set_fill_color(*row_alt_fill)
+            else:
+                pdf.set_fill_color(255, 255, 255)
+            fill_toggle = not fill_toggle
+
+            level = (f.get("level") or "").upper()
+            typ = (f.get("type") or "").capitalize()
+            url = f.get("url") or ""
+            notes = f.get("notes") or ""
+            # Truncate to keep row heights clean
+            url_disp = (url[:76] + "...") if len(url) > 79 else url
+            notes_disp = (notes[:53] + "...") if len(notes) > 56 else notes
+
+            # Color-code level text
+            if level == "HIGH":
+                level_color = (200, 30, 30)
+            elif level == "MEDIUM":
+                level_color = (200, 120, 20)
+            else:
+                level_color = (30, 140, 50)
+
+            # Level
+            pdf.set_text_color(*level_color)
+            pdf.cell(22, 7, level, 1, 0, "C", True)
+            # Type
+            pdf.set_text_color(15, 15, 15)
+            pdf.cell(22, 7, typ, 1, 0, "C", True)
+            # URL
+            pdf.cell(80, 7, url_disp, 1, 0, "L", True)
+            # Notes
+            pdf.cell(56, 7, notes_disp, 1, 1, "L", True)
+
+    # Complete scan log (styled table) - optional
+    if scan_details.get("include_full_log", True):
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.cell(0, 10, "Complete Scan Log", 0, 1, "C")
+        pdf.ln(2)
+
+        # Table header
+        header_fill = (240, 244, 248)
+        row_alt_fill = (249, 251, 253)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(*header_fill)
+        pdf.set_draw_color(220, 223, 230)
+        pdf.set_text_color(20, 40, 80)
+        pdf.cell(100, 8, "Path", 1, 0, "L", True)
+        pdf.cell(25, 8, "Status", 1, 0, "C", True)
+        pdf.cell(25, 8, "Result", 1, 0, "C", True)
+        pdf.cell(25, 8, "Type", 1, 1, "C", True)
+
+        # Table rows
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(15, 15, 15)
+        fill_toggle = False
+        # Also deduplicate any duplicates that slipped through by path key
+        seen_paths = set()
+        for scan in scanned_urls_log:
+            path_key = (scan.get("path") or "").strip("/")
+            if path_key in seen_paths:
+                continue
+            seen_paths.add(path_key)
+
+            if fill_toggle:
+                pdf.set_fill_color(*row_alt_fill)
+            else:
+                pdf.set_fill_color(255, 255, 255)
+            fill_toggle = not fill_toggle
+
+            display_path = scan["path"][:95] + "..." if len(scan["path"]) > 98 else scan["path"]
+
+            if scan["vulnerability"] == "high":
+                pdf.set_text_color(200, 30, 30)  # red-ish
+                result_symbol = "HIGH"
+            elif scan["vulnerability"] == "medium":
+                pdf.set_text_color(200, 120, 20)  # orange-ish
+                result_symbol = "MED"
+            elif scan["vulnerability"] == "skipped":
+                pdf.set_text_color(120, 120, 120)  # gray
+                result_symbol = "SKIP"
+            else:
+                pdf.set_text_color(30, 140, 50)  # green-ish
+                result_symbol = "CLEAN"
+
+            pdf.cell(100, 7, display_path, 1, 0, "L", True)
+            pdf.cell(25, 7, str(scan["status"]), 1, 0, "C", True)
+            pdf.cell(25, 7, result_symbol, 1, 0, "C", True)
+            pdf.cell(25, 7, scan["type"], 1, 1, "C", True)
+
+            # Reset text color for next row
+            pdf.set_text_color(15, 15, 15)
+
+    # Summary statistics as table
+    pdf.ln(6)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(20, 40, 80)
+    pdf.cell(0, 8, "Scan Statistics", 0, 1)
+
+    header_fill = (240, 244, 248)
+    row_alt_fill = (249, 251, 253)
+
+    # Table header
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(*header_fill)
+    pdf.set_draw_color(220, 223, 230)
+    pdf.set_text_color(20, 40, 80)
+    pdf.cell(120, 8, "Metric", 1, 0, "L", True)
+    pdf.cell(60, 8, "Value", 1, 1, "C", True)
+
+    # Table rows
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(20, 20, 20)
     total_scanned = len(scanned_urls_log)
     high_vulns = sum(1 for scan in scanned_urls_log if scan["vulnerability"] == "high")
     medium_vulns = sum(1 for scan in scanned_urls_log if scan["vulnerability"] == "medium")
     clean_scans = sum(1 for scan in scanned_urls_log if scan["vulnerability"] == "clean")
     skipped_scans = sum(1 for scan in scanned_urls_log if scan["vulnerability"] == "skipped")
-    
-    pdf.cell(0, 6, f"Total URLs scanned: {total_scanned}", 0, 1)
-    pdf.cell(0, 6, f"High risk vulnerabilities: {high_vulns}", 0, 1)
-    pdf.cell(0, 6, f"Medium risk vulnerabilities: {medium_vulns}", 0, 1)
-    pdf.cell(0, 6, f"Clean scans: {clean_scans}", 0, 1)
-    pdf.cell(0, 6, f"Skipped (CDN libraries): {skipped_scans}", 0, 1)
+
+    stats_rows = [
+        ("Total URLs scanned", str(total_scanned)),
+        ("High risk vulnerabilities", str(high_vulns)),
+        ("Medium risk vulnerabilities", str(medium_vulns)),
+        ("Clean scans", str(clean_scans)),
+        ("Skipped (CDN libraries)", str(skipped_scans)),
+    ]
+    fill_toggle = False
+    for metric, value in stats_rows:
+        if fill_toggle:
+            pdf.set_fill_color(*row_alt_fill)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+        fill_toggle = not fill_toggle
+        pdf.cell(120, 7, metric, 1, 0, "L", True)
+        pdf.cell(60, 7, value, 1, 1, "C", True)
 
     # Generate filename with company name
     company_safe = "".join(c for c in scan_details['company_name'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
@@ -500,8 +670,20 @@ async def run_full_scan(base_url: str, speed: str):
     findings = []
     counters = {"files": 0, "directories": 0}
 
+    # Deduplicate paths to avoid scanning /backup and /backup/ separately
+    def normalize_path_key(p: str) -> str:
+        return p.strip("/")
+
+    unique_paths = []
+    seen_keys = set()
+    for p in paths_to_scan:
+        key = normalize_path_key(p)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique_paths.append(p)
+
     print(f"{Colors.BOLD}{Colors.BLUE}🔍 Starting security scan of {base_url}{Colors.END}")
-    print(f"{Colors.CYAN}📊 Total paths to scan: {len(paths_to_scan)}{Colors.END}")
+    print(f"{Colors.CYAN}📊 Total paths to scan: {len(unique_paths)} (deduplicated){Colors.END}")
     print(f"{Colors.CYAN}⚡ Scan speed: {speed}{Colors.END}")
     print("-" * 60)
 
@@ -521,7 +703,7 @@ async def run_full_scan(base_url: str, speed: str):
     async with aiohttp.ClientSession(connector=connector) as session:
         # Initialize soft-404 baseline for this target
         await init_soft_404_baseline(session, normalized_base, speed)
-        tasks = [analyze_path(session, normalized_base, path, findings, counters, speed) for path in paths_to_scan]
+        tasks = [analyze_path(session, normalized_base, path, findings, counters, speed) for path in unique_paths]
         await asyncio.gather(*tasks)
         await analyze_js(session, normalized_base, findings, counters, speed)
 
