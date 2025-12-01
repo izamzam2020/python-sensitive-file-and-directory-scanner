@@ -6,7 +6,10 @@ from bs4 import BeautifulSoup
 from fpdf import FPDF
 from datetime import datetime
 import os
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 import argparse
 import random
 from dotenv import load_dotenv  # <-- added for .env support
@@ -17,9 +20,22 @@ import difflib
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise Exception("Set your OPENAI_API_KEY in the .env file before running")
-client = OpenAI(api_key=OPENAI_API_KEY)
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+client = None
+AI_ENABLED = False
+AI_DISABLED_REASON = ""
+
+if OpenAI is None:
+    AI_DISABLED_REASON = "OpenAI package not installed"
+elif OPENAI_API_KEY:
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        AI_ENABLED = True
+        AI_DISABLED_REASON = ""
+    except Exception as e:
+        AI_DISABLED_REASON = f"Failed to initialize OpenAI client ({e})"
+else:
+    AI_DISABLED_REASON = "OPENAI_API_KEY not set"
 
 # Import paths to scan from separate file
 from paths_to_scan import paths_to_scan
@@ -179,6 +195,9 @@ def score_content_sensitivity(content: str) -> str:
 
 # AI analysis for uncertain content
 def ai_analyze_content(url: str, content: str, context_type="general") -> str:
+    if not AI_ENABLED or client is None:
+        reason = AI_DISABLED_REASON or "disabled"
+        return f"AI analysis skipped: {reason}"
     prompt = (
         f"You are an AI security auditor. Analyze the following {context_type} content from {url} "
         f"and determine if it poses a security risk. Respond concisely with your confidence and explanation.\n\n"
@@ -186,7 +205,7 @@ def ai_analyze_content(url: str, content: str, context_type="general") -> str:
     )
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=250,
@@ -748,8 +767,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Website audit scanner with throttling and AI assistance")
     parser.add_argument("--speed", choices=["fast", "medium", "slow"], default="slow",
                         help="Scan speed with throttling delay (default: slow)")
+    parser.add_argument("--disable-ai", action="store_true",
+                        help="Disable optional OpenAI-assisted analysis even if configured")
 
     args = parser.parse_args()
+
+    if args.disable_ai:
+        AI_ENABLED = False
+        AI_DISABLED_REASON = "AI manually disabled via --disable-ai flag"
+
+    if AI_ENABLED:
+        print(f"{Colors.GREEN}✅ AI analysis enabled (model: {OPENAI_MODEL}){Colors.END}")
+    else:
+        reason = AI_DISABLED_REASON or "AI disabled"
+        print(f"{Colors.YELLOW}⚠️ AI analysis disabled: {reason}{Colors.END}")
     
     # Get scan details from user
     get_scan_details()
