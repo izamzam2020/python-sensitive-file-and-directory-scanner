@@ -5,10 +5,6 @@ This tool is designed for educational and authorized security testing purposes o
 
 The author assumes no responsibility or liability for misuse, damage, or any consequences arising from improper or illegal use of this software. Always operate in accordance with ethical hacking principles and applicable regulations.
 
-# Async Website Audit Scanner
-
-An asynchronous website audit scanner that probes a target site for commonly exposed files and directories and produces a timestamped PDF report. It is designed for fast, configurable reconnaissance and lightweight triage of potentially sensitive content.
-
 # Key features
 Configurable list of paths to probe via paths_to_scan.py
 
@@ -21,25 +17,23 @@ Configurable list of paths to probe via paths_to_scan.py
 Adjustable pacing with --speed to control per-request delay and concurrency
 
 # How it works
-The scanner reads the list of paths from paths_to_scan.py.
+The scanner reads its list of paths from paths_to_scan.py, then works through them one by one. It also grabs the homepage and checks any JavaScript files it finds there, ignoring anything that comes from common CDN domains.
 
-It requests each path and also fetches the homepage to discover linked JavaScript files. Known CDN hosts are excluded from JS fetching.
+For every HTTP response, it records the status code and looks for patterns or keywords that might indicate a security issue. Anything it flags is given a rough risk rating of low, medium, or high.
 
-Each HTTP response is analyzed for status codes and content indicators. Matches for sensitive keywords are flagged and assigned a heuristic risk level of low, medium, or high.
+If something lands in the medium range, the scanner can optionally send a small snippet of the response to an OpenAI model. The model gives a quick opinion on whether the content looks risky, along with a short explanation and a confidence level.
 
-When a heuristic returns medium risk, the tool can call an OpenAI model to provide a short, focused assessment on a context-limited excerpt. The AI acts as a reviewer and returns a brief explanation and a confidence estimate.
+All results are written to a timestamped PDF that includes a summary, the detailed findings, and a color coded log.
 
-All findings are saved to a timestamped PDF report that includes a summary, detailed results, and a full color-coded log for traceability.
-
-The scanner generates a URL that will intentionally return a 404. This response is stored during the scan so that soft 404s (pages that return a 200 status but are effectively 404s) can be detected.
+During the scan, the tool also generates a URL that will always return a 404. It uses this stored response as a baseline to help spot soft 404s, where a server returns a normal 200 status even though the page is basically missing.
 
 # Risk grading
 
-Heuristics scan content for keywords that commonly indicate exposed secrets or credentials and assign low, medium, or high risk.
+Heuristics scan the content for keywords that often point to exposed secrets or credentials and assign a risk level of low, medium, or high.
 
-Optional AI triage: when heuristics result is medium risk, the app can send a limited excerpt to an OpenAI model that returns a short assessment and confidence. The AI is a reviewer only and not a final arbiter.
+For medium-risk results, the tool can optionally run an AI triage step. It sends a small excerpt to an OpenAI model, which provides a brief assessment and a confidence rating. The AI acts only as a reviewer, not the final decision maker.
 
-Pacing and concurrency (--speed)
+Pacing and concurrency are controlled with the --speed option.
 
 **slow (default)**
 
@@ -74,16 +68,21 @@ If you want to include your logo in the report, create a directory called **imag
 
 Create and activate a virtual environment:
 
-python -m venv venv
-source venv/bin/activate   # on Windows use: venv\Scripts\activate
+```python -m venv venv```
+
+``` Linux/Mac: source venv/bin/activate```
+
+``` On Windows use: venv\Scripts\activate```
 
 # Install dependencies:
 
-pip install -r requirements.txt
+```pip install -r requirements.txt```
 
 Create a .env file in the project root with your OpenAI key if using AI triage:
 
-.env example: OPENAI_API_KEY="KEY_HERE"
+.env example: ```OPENAI_API_KEY="KEY_HERE"```
 
-To run: python app.py --speed slow
+``` To run with ai: python app.py --speed slow```
+
+``` Run without AI: python app.py --speed fast --disable-ai ```
 
