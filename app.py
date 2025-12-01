@@ -4,6 +4,7 @@ import aiohttp
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos
 from datetime import datetime
 import os
 try:
@@ -344,9 +345,8 @@ async def analyze_path(session, base_url: str, path: str, findings: list, counte
             scan_result["vulnerability"] = "high"
             print(f"{Colors.GREEN}✅{Colors.END} {Colors.RED}[HIGH]{Colors.END} {Colors.BOLD}{path}{Colors.END} - Publicly downloadable sensitive file")
             findings.append({"level": "high", "url": full_url, "notes": "Publicly downloadable sensitive file", "type": "file"})
-        # Soft-404 guard
         # Soft-404 guard: treat as clean if body matches site's not-found template
-        if looks_like_soft_404(status, content):
+        elif looks_like_soft_404(status, content):
             scan_result["vulnerability"] = "clean"
             print(f"{Colors.GREEN}✅{Colors.END} {Colors.WHITE}[CLEAN]{Colors.END} {path} (soft 404)")
         # Check if this is a sensitive directory that shouldn't be publicly accessible
@@ -498,14 +498,46 @@ class PDFReport(FPDF):
         self.set_xy(15, 12)
         self.set_font("Helvetica", "B", 16)
         self.set_text_color(20, 40, 80)
-        self.cell(0, 10, "Website Security Scan Report", 0, 1, "R")
+        self.cell(
+            0,
+            10,
+            "Website Security Scan Report",
+            border=0,
+            align="R",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         self.set_font("Helvetica", "B", 12)
         self.set_text_color(0, 0, 0)
-        self.cell(0, 8, f"Company: {scan_details['company_name']}", 0, 1, "R")
+        self.cell(
+            0,
+            8,
+            f"Company: {scan_details['company_name']}",
+            border=0,
+            align="R",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
         self.set_font("Helvetica", "", 10)
-        self.cell(0, 6, f"Target URL: {scan_details['target_url']}", 0, 1, "R")
-        self.cell(0, 6, f"Scan Date: {scan_details['scan_date']}", 0, 1, "R")
+        self.cell(
+            0,
+            6,
+            f"Target URL: {scan_details['target_url']}",
+            border=0,
+            align="R",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+        self.cell(
+            0,
+            6,
+            f"Scan Date: {scan_details['scan_date']}",
+            border=0,
+            align="R",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         # Separator line
         self.ln(2)
@@ -518,7 +550,15 @@ class PDFReport(FPDF):
         self.set_y(-15)
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(120, 120, 120)
-        self.cell(0, 10, f"Page {self.page_no()}", 0, 0, "C")
+        self.cell(
+            0,
+            10,
+            f"Page {self.page_no()}",
+            border=0,
+            align="C",
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
 
 def save_report_to_pdf(findings: list, counters: dict) -> str:
     pdf = PDFReport()
@@ -534,23 +574,66 @@ def save_report_to_pdf(findings: list, counters: dict) -> str:
     pdf.set_line_width(0.3)
 
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "Scan Summary", 0, 1)
+    pdf.cell(
+        0,
+        10,
+        "Scan Summary",
+        border=0,
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
     pdf.set_font("Helvetica", "", 11)
 
     pdf.set_x(15)
-    pdf.multi_cell(0, 8, f"Files scanned: {counters.get('files',0)}", 0, 1, fill=False)
+    pdf.multi_cell(
+        0,
+        8,
+        f"Files scanned: {counters.get('files',0)}",
+        border=0,
+        align="L",
+        fill=False,
+    )
     pdf.set_x(15)
-    pdf.multi_cell(0, 8, f"Directories scanned: {counters.get('directories',0)}", 0, 1, fill=False)
+    pdf.multi_cell(
+        0,
+        8,
+        f"Directories scanned: {counters.get('directories',0)}",
+        border=0,
+        align="L",
+        fill=False,
+    )
     pdf.set_x(15)
-    pdf.multi_cell(0, 8, f"Potential issues found: {len(findings)}", 0, 1, fill=False)
+    pdf.multi_cell(
+        0,
+        8,
+        f"Potential issues found: {len(findings)}",
+        border=0,
+        align="L",
+        fill=False,
+    )
     pdf.ln(5)
 
     # Findings details as styled table
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "Details", 0, 1)
+    pdf.cell(
+        0,
+        10,
+        "Details",
+        border=0,
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
     if not findings:
         pdf.set_font("Helvetica", "I", 11)
-        pdf.cell(0, 8, "No security issues detected.", 1, 1, "C")
+        pdf.cell(
+            0,
+            8,
+            "No security issues detected.",
+            border=1,
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
     else:
         header_fill = (240, 244, 248)
         row_alt_fill = (249, 251, 253)
@@ -559,10 +642,46 @@ def save_report_to_pdf(findings: list, counters: dict) -> str:
         pdf.set_draw_color(220, 223, 230)
         pdf.set_text_color(20, 40, 80)
         # Columns: Level (22) | Type (22) | URL (80) | Notes (56) = 180
-        pdf.cell(22, 8, "Level", 1, 0, "C", True)
-        pdf.cell(22, 8, "Type", 1, 0, "C", True)
-        pdf.cell(80, 8, "URL", 1, 0, "L", True)
-        pdf.cell(56, 8, "Notes", 1, 1, "L", True)
+        pdf.cell(
+            22,
+            8,
+            "Level",
+            border=1,
+            align="C",
+            fill=True,
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
+        pdf.cell(
+            22,
+            8,
+            "Type",
+            border=1,
+            align="C",
+            fill=True,
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
+        pdf.cell(
+            80,
+            8,
+            "URL",
+            border=1,
+            align="L",
+            fill=True,
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
+        pdf.cell(
+            56,
+            8,
+            "Notes",
+            border=1,
+            align="L",
+            fill=True,
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(15, 15, 15)
@@ -592,20 +711,64 @@ def save_report_to_pdf(findings: list, counters: dict) -> str:
 
             # Level
             pdf.set_text_color(*level_color)
-            pdf.cell(22, 7, level, 1, 0, "C", True)
+            pdf.cell(
+                22,
+                7,
+                level,
+                border=1,
+                align="C",
+                fill=True,
+                new_x=XPos.RIGHT,
+                new_y=YPos.TOP,
+            )
             # Type
             pdf.set_text_color(15, 15, 15)
-            pdf.cell(22, 7, typ, 1, 0, "C", True)
+            pdf.cell(
+                22,
+                7,
+                typ,
+                border=1,
+                align="C",
+                fill=True,
+                new_x=XPos.RIGHT,
+                new_y=YPos.TOP,
+            )
             # URL
-            pdf.cell(80, 7, url_disp, 1, 0, "L", True)
+            pdf.cell(
+                80,
+                7,
+                url_disp,
+                border=1,
+                align="L",
+                fill=True,
+                new_x=XPos.RIGHT,
+                new_y=YPos.TOP,
+            )
             # Notes
-            pdf.cell(56, 7, notes_disp, 1, 1, "L", True)
+            pdf.cell(
+                56,
+                7,
+                notes_disp,
+                border=1,
+                align="L",
+                fill=True,
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
 
     # Complete scan log (styled table) - optional
     if scan_details.get("include_full_log", True):
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 14)
-        pdf.cell(0, 10, "Complete Scan Log", 0, 1, "C")
+        pdf.cell(
+            0,
+            10,
+            "Complete Scan Log",
+            border=0,
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
         pdf.ln(2)
 
         # Table header
@@ -615,10 +778,46 @@ def save_report_to_pdf(findings: list, counters: dict) -> str:
         pdf.set_fill_color(*header_fill)
         pdf.set_draw_color(220, 223, 230)
         pdf.set_text_color(20, 40, 80)
-        pdf.cell(100, 8, "Path", 1, 0, "L", True)
-        pdf.cell(25, 8, "Status", 1, 0, "C", True)
-        pdf.cell(25, 8, "Result", 1, 0, "C", True)
-        pdf.cell(25, 8, "Type", 1, 1, "C", True)
+        pdf.cell(
+            100,
+            8,
+            "Path",
+            border=1,
+            align="L",
+            fill=True,
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
+        pdf.cell(
+            25,
+            8,
+            "Status",
+            border=1,
+            align="C",
+            fill=True,
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
+        pdf.cell(
+            25,
+            8,
+            "Result",
+            border=1,
+            align="C",
+            fill=True,
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
+        pdf.cell(
+            25,
+            8,
+            "Type",
+            border=1,
+            align="C",
+            fill=True,
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         # Table rows
         pdf.set_font("Helvetica", "", 9)
@@ -653,10 +852,46 @@ def save_report_to_pdf(findings: list, counters: dict) -> str:
                 pdf.set_text_color(30, 140, 50)  # green-ish
                 result_symbol = "CLEAN"
 
-            pdf.cell(100, 7, display_path, 1, 0, "L", True)
-            pdf.cell(25, 7, str(scan["status"]), 1, 0, "C", True)
-            pdf.cell(25, 7, result_symbol, 1, 0, "C", True)
-            pdf.cell(25, 7, scan["type"], 1, 1, "C", True)
+            pdf.cell(
+                100,
+                7,
+                display_path,
+                border=1,
+                align="L",
+                fill=True,
+                new_x=XPos.RIGHT,
+                new_y=YPos.TOP,
+            )
+            pdf.cell(
+                25,
+                7,
+                str(scan["status"]),
+                border=1,
+                align="C",
+                fill=True,
+                new_x=XPos.RIGHT,
+                new_y=YPos.TOP,
+            )
+            pdf.cell(
+                25,
+                7,
+                result_symbol,
+                border=1,
+                align="C",
+                fill=True,
+                new_x=XPos.RIGHT,
+                new_y=YPos.TOP,
+            )
+            pdf.cell(
+                25,
+                7,
+                scan["type"],
+                border=1,
+                align="C",
+                fill=True,
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
 
             # Reset text color for next row
             pdf.set_text_color(15, 15, 15)
@@ -665,7 +900,14 @@ def save_report_to_pdf(findings: list, counters: dict) -> str:
     pdf.ln(6)
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(20, 40, 80)
-    pdf.cell(0, 8, "Scan Statistics", 0, 1)
+    pdf.cell(
+        0,
+        8,
+        "Scan Statistics",
+        border=0,
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
 
     header_fill = (240, 244, 248)
     row_alt_fill = (249, 251, 253)
@@ -675,8 +917,26 @@ def save_report_to_pdf(findings: list, counters: dict) -> str:
     pdf.set_fill_color(*header_fill)
     pdf.set_draw_color(220, 223, 230)
     pdf.set_text_color(20, 40, 80)
-    pdf.cell(120, 8, "Metric", 1, 0, "L", True)
-    pdf.cell(60, 8, "Value", 1, 1, "C", True)
+    pdf.cell(
+        120,
+        8,
+        "Metric",
+        border=1,
+        align="L",
+        fill=True,
+        new_x=XPos.RIGHT,
+        new_y=YPos.TOP,
+    )
+    pdf.cell(
+        60,
+        8,
+        "Value",
+        border=1,
+        align="C",
+        fill=True,
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
 
     # Table rows
     pdf.set_font("Helvetica", "", 10)
@@ -701,8 +961,26 @@ def save_report_to_pdf(findings: list, counters: dict) -> str:
         else:
             pdf.set_fill_color(255, 255, 255)
         fill_toggle = not fill_toggle
-        pdf.cell(120, 7, metric, 1, 0, "L", True)
-        pdf.cell(60, 7, value, 1, 1, "C", True)
+        pdf.cell(
+            120,
+            7,
+            metric,
+            border=1,
+            align="L",
+            fill=True,
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
+        pdf.cell(
+            60,
+            7,
+            value,
+            border=1,
+            align="C",
+            fill=True,
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
     # Generate filename with company name
     company_safe = "".join(c for c in scan_details['company_name'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
